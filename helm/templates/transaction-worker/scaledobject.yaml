@@ -1,0 +1,39 @@
+# minReplicaCount defaults to 1 (values.worker.minReplicaCount), NOT the
+# original KEDA.md §6 design of 0: on this cluster (KEDA 2.16.1), the
+# operator's internal push-loop that handles the 0->1 scale-from-zero
+# transition was found to reliably stop ticking after its first activation -
+# confirmed via a clean test (fresh operator restart on stable, non-preempted
+# nodes, message already in the queue at startup) that never triggered a
+# scale-up despite the same aws-sqs-queue scaler resolving the correct live
+# queue depth every time it was queried directly through the external
+# metrics API. Root cause not identified (ruled out: IRSA/credentials, queue
+# depth correctness, node preemption/AZRebalance churn). At
+# minReplicaCount: 1, HPA (not KEDA's push-loop) drives scaling in
+# [1,maxReplicaCount] using that same, proven-correct external metric path,
+# so scale-up/down above the floor still works. See prompting/Helm.md §3 and
+# kubernetes/transaction-worker/scaledobject.yaml's matching header comment.
+# Revisit scale-to-zero (KEDA.md §5's claim-check-with-lease design remains
+# safe for it) once this is root-caused or KEDA is upgraded past 2.16.1.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: transaction-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: transaction-worker
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    name: transaction-worker
+  minReplicaCount: {{ .Values.worker.minReplicaCount }}
+  maxReplicaCount: {{ .Values.worker.maxReplicaCount }}
+  cooldownPeriod: {{ .Values.worker.cooldownPeriod }}
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: {{ .Values.worker.sqs.queueUrl | quote }}
+        queueLength: {{ .Values.worker.queueLength | quote }}
+        awsRegion: {{ .Values.awsRegion | quote }}
+      authenticationRef:
+        name: transaction-worker-sqs-auth

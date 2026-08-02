@@ -1,0 +1,158 @@
+name: Deploy
+
+# Auto-deploys the `develop` environment whenever `develop` is merged into
+# `master` (a push to master) - not on every push to develop directly, so
+# work-in-progress commits on develop don't trigger a deploy, only the
+# deliberate act of merging. staging/production only ever run via manual
+# dispatch (never auto-deployed off a push). See helm/justfile's deploy-all
+# recipe - this workflow calls the same recipes in the same order, just as
+# separate steps for easier per-stage debugging.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        type: choice
+        options: [develop, staging, production]
+        default: develop
+      tag:
+        description: Image tag (blank = use this commit's short SHA, same default helm/justfile's build-push uses)
+        type: string
+        default: ""
+
+concurrency:
+  group: microservice1-deploy-${{ inputs.environment || 'develop' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ca-central-1
+
+jobs:
+  # Runs first, before anything touches AWS. check-cluster/deploy both
+  # transitively depend on this (see check-cluster's needs: below) via
+  # needs:, so a test failure stops the whole pipeline immediately - neither
+  # of those jobs starts at all. ShardRouting.Tests is a standalone test
+  # project (not referenced by any .sln - see prompting/GithubAction.md §2),
+  # so it needs its own explicit `dotnet test` step or its tests would never
+  # run in CI at all.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Test ShardRouting (shared library)
+        run: dotnet test components/ShardRouting.Tests/ShardRouting.Tests.csproj
+
+      - name: Test TransactionGateway
+        run: dotnet test components/TransactionGateway/TransactionGateway.sln
+
+      - name: Test TransactionService
+        run: dotnet test components/TransactionService/TransactionService.sln
+
+      - name: Test TransactionWorker
+        run: dotnet test components/TransactionWorker/TransactionWorker.sln
+
+  # Separate job so a torn-down cluster shows as a clean "skipped" deploy job
+  # in the Actions UI, not a wall of skipped steps - deploy-app assumes
+  # terraform apply already ran for this environment (same assumption
+  # helm/justfile's own comment makes), which won't be true most of the time
+  # given this project's cost-conscious "tear the cluster down between
+  # sessions" pattern.
+  check-cluster:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.vars.outputs.environment }}
+      tag: ${{ steps.vars.outputs.tag }}
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve environment and image tag
+        id: vars
+        run: |
+          ENVIRONMENT="${{ inputs.environment }}"
+          if [ -z "$ENVIRONMENT" ]; then
+            ENVIRONMENT="develop"
+          fi
+
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="$(git rev-parse --short HEAD)"
+          fi
+
+          echo "environment=$ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check whether the cluster exists
+        id: check
+        run: |
+          if aws eks describe-cluster --name "microservice1-${{ steps.vars.outputs.environment }}" --region "${{ env.AWS_REGION }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Cluster microservice1-${{ steps.vars.outputs.environment }} not found - terraform hasn't been applied for this environment right now, so deploy is being skipped (expected while the cluster is torn down between sessions, not a failure)."
+          fi
+
+  deploy:
+    needs: check-cluster
+    if: needs.check-cluster.outputs.exists == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: ${{ needs.check-cluster.outputs.environment }}
+      TAG: ${{ needs.check-cluster.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: extractions/setup-just@v2
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        working-directory: helm
+        run: just update-kubeconfig "$ENVIRONMENT"
+
+      - name: Install ALB controller
+        working-directory: helm
+        run: just install-alb-controller "$ENVIRONMENT"
+
+      - name: Install ExternalDNS
+        working-directory: helm
+        run: just install-external-dns "$ENVIRONMENT"
+
+      - name: Install Cluster Autoscaler
+        working-directory: helm
+        run: just install-cluster-autoscaler "$ENVIRONMENT"
+
+      - name: Build and push images
+        working-directory: helm
+        run: just build-push "$ENVIRONMENT" "$TAG"
+
+      - name: Deploy app
+        working-directory: helm
+        run: just deploy-app "$ENVIRONMENT" "$TAG"

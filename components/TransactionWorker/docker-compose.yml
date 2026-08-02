@@ -1,0 +1,30 @@
+# KEDA.md §9: runs the TransactionWorker container(s) locally only - no SQS/
+# DynamoDB/RDS emulators, so this hits the real dev queue/table/DB instances.
+# AWS credentials come from the host environment (profile/SSO), same pattern
+# as TransactionService/TransactionGateway.
+#
+# Build context is components/ (one level above this file), not
+# TransactionWorker/ itself, so the shared components/ShardRouting library
+# (database.md §10) is reachable at build time - same reason
+# TransactionService's docker-compose.yml uses `context: ..`.
+#
+# To exercise the crash-recovery/reclaim path (KEDA.md §5) locally, scale up
+# with `docker compose up --scale transaction-worker=3` and kill one
+# container mid-processing - each replica gets its own container hostname by
+# default, which is what HostnameWorkerIdentity uses as the claim/node
+# identity, so no extra WORKER_ID configuration is needed for them to differ.
+services:
+  transaction-worker:
+    build:
+      context: ..
+      dockerfile: TransactionWorker/Dockerfile
+    environment:
+      AWS__Region: ${AWS_REGION:-ca-central-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      Sqs__QueueUrl: ${SQS_QUEUE_URL:?set SQS_QUEUE_URL to the real dev TransactionQueue URL}
+      DynamoDb__TableName: ${DYNAMODB_TABLE_NAME:-transaction-claims-develop}
+      Shards__ConnectionStrings__0: ${SHARD_0_CONNECTION_STRING:?set SHARD_0_CONNECTION_STRING to the dev shard-0 RDS instance}
+      Shards__ConnectionStrings__1: ${SHARD_1_CONNECTION_STRING:?set SHARD_1_CONNECTION_STRING to the dev shard-1 RDS instance}
+      Shards__ConnectionStrings__2: ${SHARD_2_CONNECTION_STRING:?set SHARD_2_CONNECTION_STRING to the dev shard-2 RDS instance}

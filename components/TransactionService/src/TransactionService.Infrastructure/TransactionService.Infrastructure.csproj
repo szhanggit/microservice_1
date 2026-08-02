@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\TransactionService.Application\TransactionService.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.100.7" />
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.100.7" />
+    <!-- No code references this directly - the AWS SDK reflectively loads it at
+         runtime only when resolving IRSA's AssumeRoleWithWebIdentityCredentials.
+         Without it, SendMessage throws InvalidOperationException in-cluster
+         (works fine locally against non-IRSA credentials). -->
+    <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.100.7" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" Version="10.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

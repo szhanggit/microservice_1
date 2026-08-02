@@ -1,0 +1,9 @@
+# Single chart covering all three services (transaction-gateway/service/worker) -
+# see prompting/Helm.md §2 "Chart structure" decision. Coexists with
+# kubernetes/'s plain-manifest deployment path; does not replace it.
+apiVersion: v2
+name: microservice1
+description: TransactionGateway / TransactionService / TransactionWorker
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

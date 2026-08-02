@@ -1,0 +1,71 @@
+# No Service and no probes - TransactionWorker has no HTTP listener at all
+# (KEDA.md §4, uses dotnet/runtime not dotnet/aspnet as its base image).
+# serviceAccountName - created directly by Terraform's irsa_transaction_worker
+# module, granting SQS receive/delete/GetQueueAttributes + DynamoDB
+# PutItem/UpdateItem/Query. This chart never creates the ServiceAccount
+# itself - see prompting/Helm.md §2.
+#
+# replicas set to worker.minReplicaCount (the ScaledObject's floor, not an
+# independent literal) - scaledobject.yaml's HorizontalPodAutoscaler (created
+# by KEDA) owns the actual replica count once applied and will immediately
+# reconcile back to at least this floor even if a `helm upgrade` briefly
+# resets it, same as kubernetes/transaction-worker/deployment.yaml's own
+# replicas: field. Kept in sync with minReplicaCount here (unlike that raw
+# manifest, which still hardcodes replicas: 0 despite scaledobject.yaml's
+# minReplicaCount now being 1) specifically so the two never drift again.
+#
+# The db-connection-strings Secret referenced below is created separately by
+# kubernetes/scripts/apply-db-secret.sh (delegated to by helm/justfile's
+# apply-db-secret recipe - pulled live from Secrets Manager, never committed).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: transaction-worker
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.minReplicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transaction-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transaction-worker
+        app.kubernetes.io/part-of: microservice1
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ .Values.worker.serviceAccountName }}
+      containers:
+        - name: transaction-worker
+          image: {{ .Values.worker.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS__Region
+              value: {{ .Values.awsRegion | quote }}
+            - name: Sqs__QueueUrl
+              value: {{ .Values.worker.sqs.queueUrl | quote }}
+            - name: DynamoDb__TableName
+              value: {{ .Values.worker.dynamodb.tableName | quote }}
+            # database.md §1's topology note: shard-0/shard-2 don't physically
+            # exist, so all 3 keys point at the same shard-1 instance.
+            - name: Shards__ConnectionStrings__0
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__1
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__2
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}

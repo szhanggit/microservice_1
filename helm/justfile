@@ -1,0 +1,76 @@
+set shell := ["bash", "-uc"]
+
+# kubernetes/'s scripts, relative to this directory - recipes that aren't
+# Helm-specific (kubeconfig, third-party controller installs, db
+# secret/reset, image builds) delegate straight into them rather than
+# duplicating them. See prompting/Helm.md §2 "Third-party charts" / "db-init
+# Job" decisions - only deploy-app/deploy-all/destroy-app differ, in
+# scripts/ alongside this justfile.
+K8S_SCRIPTS := "../kubernetes/scripts"
+
+# Point local kubectl/helm at the EKS cluster microservice_1_terraform
+# created for one environment. Reads the cluster name from SSM Parameter
+# Store - no dependency on the Terraform CLI, that project's state, or S3
+# backend credentials.
+update-kubeconfig env="develop":
+    {{K8S_SCRIPTS}}/update-kubeconfig.sh {{env}}
+
+# main.tf's eks_alb_controller module only provisions IAM/IRSA - this
+# installs the controller itself via Helm. Required for
+# templates/transaction-gateway/ingress.yaml to do anything at all.
+install-alb-controller env="develop": (update-kubeconfig env)
+    {{K8S_SCRIPTS}}/install-alb-controller.sh {{env}}
+
+# main.tf's eks_cluster_autoscaler module only provisions IAM/IRSA - this
+# installs the autoscaler itself via Helm.
+install-cluster-autoscaler env="develop": (update-kubeconfig env)
+    {{K8S_SCRIPTS}}/install-cluster-autoscaler.sh {{env}}
+
+# main.tf's eks_external_dns module only provisions IAM/IRSA - this installs
+# the controller itself via Helm, scoped to domainFilters=ekslab.xyz and
+# policy=upsert-only. Required for values.yaml's gateway.ingress.hostname to
+# actually create a Route53 record.
+install-external-dns env="develop": (update-kubeconfig env)
+    {{K8S_SCRIPTS}}/install-external-dns.sh {{env}}
+
+apply-db-secret env="develop":
+    {{K8S_SCRIPTS}}/apply-db-secret.sh {{env}}
+
+# Drops and recreates transactions/transactions_reporting from
+# components/TransactionWorker/resources/postgres/*.sql via a Kubernetes Job.
+# Runs automatically as part of deploy-app/deploy-all (destructive by design,
+# same as kubernetes/) - this recipe exists to reset the schema on demand
+# without a full redeploy.
+init-db env="develop": (update-kubeconfig env)
+    {{K8S_SCRIPTS}}/init-db.sh {{env}}
+
+# Build + push the three service images to ECR - identical to
+# kubernetes/justfile's own recipe, not Helm-specific. tag defaults to the
+# current commit's short SHA.
+build-push env="develop" tag=`git rev-parse --short HEAD`:
+    {{K8S_SCRIPTS}}/build-and-push-images.sh {{env}} {{tag}}
+
+# Resolves image URLs/Redis/SQS/DynamoDB values from SSM (same as
+# kubernetes/scripts/deploy-app.sh) and runs `helm upgrade --install` with
+# them via --set - see scripts/deploy-app.sh.
+deploy-app env="develop" tag=`git rev-parse --short HEAD`: (update-kubeconfig env)
+    ./scripts/deploy-app.sh {{env}} {{tag}}
+
+# Full path to get the whole system running on EKS in one command, assuming
+# microservice_1_terraform's EKS/IRSA/KEDA/ECR has already been applied.
+deploy-all env="develop" tag=`git rev-parse --short HEAD`: (install-alb-controller env) (install-external-dns env) (install-cluster-autoscaler env) (build-push env tag) (deploy-app env tag)
+
+# Tears down the Helm release + non-chart-managed resources (db secret,
+# db-init Job/ConfigMap), cleans up ExternalDNS's Route53 records, and
+# uninstalls the shared third-party controller releases. Run this BEFORE
+# `just destroy` in microservice_1_terraform - see scripts/destroy-app.sh.
+destroy-app env="develop": (update-kubeconfig env)
+    ./scripts/destroy-app.sh {{env}}
+
+# Rolls back the microservice1 Helm release - to the immediately preceding
+# revision if `revision` is left blank, or to a specific one otherwise (see
+# `helm history microservice1 -n microservice1-<env>` for available
+# revisions). Only reverts Kubernetes manifests (image tags, config, replica
+# counts) - never touches the database/schema (see scripts/rollback.sh).
+rollback env="develop" revision="": (update-kubeconfig env)
+    ./scripts/rollback.sh {{env}} {{revision}}

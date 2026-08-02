@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+option csharp_namespace = "Contracts.Transactions";
+
+package transactions;
+
+// Shared between TransactionGateway (client) and TransactionService (server) -
+// see TransactionGateway.md §5 / TransactionService.md §5. Lives outside both
+// projects since this is a monorepo and both need the exact same contract.
+service TransactionService {
+  rpc SubmitTransaction (SubmitTransactionRequest) returns (SubmitTransactionResponse);
+
+  // database.md §8: single-shard lookup, routed via components/ShardRouting
+  // (TransactionService.md §5).
+  rpc SearchByTransactionNo (SearchByTransactionNoRequest) returns (SearchByTransactionNoResponse);
+
+  // database.md §8: queries the transactions_reporting instance, fed by CDC
+  // (database.md §7) - not the OLTP shards (TransactionService.md §5).
+  rpc SearchByDateRange (SearchByDateRangeRequest) returns (SearchByDateRangeResponse);
+}
+
+message SubmitTransactionRequest {
+  string transaction_no = 1;
+  string transaction_datetime = 2; // ISO-8601
+  string amount = 3;               // decimal-as-string, avoids float precision issues over the wire
+  string type = 4;
+  string status = 5;
+  string currency = 6;
+}
+
+message SubmitTransactionResponse {
+  bool accepted = 1;
+}
+
+// A full row from either an OLTP shard or transactions_reporting
+// (database.md §6/§7).
+message Transaction {
+  int64 id = 1;
+  string transaction_no = 2;
+  string transaction_datetime = 3; // ISO-8601
+  string amount = 4;               // decimal-as-string, avoids float precision issues over the wire
+  string type = 5;
+  string status = 6;
+  string currency = 7;
+  string system_datetime = 8;      // ISO-8601
+}
+
+message SearchByTransactionNoRequest {
+  string transaction_no = 1;
+}
+
+message SearchByTransactionNoResponse {
+  bool found = 1;
+  Transaction transaction = 2; // only set when found = true
+}
+
+message SearchByDateRangeRequest {
+  string from = 1;  // ISO-8601, inclusive
+  string to = 2;    // ISO-8601, inclusive
+  int32 limit = 3;  // 1-500; TransactionGateway defaults/clamps before this RPC is called
+  int32 offset = 4;
+}
+
+message SearchByDateRangeResponse {
+  repeated Transaction transactions = 1;
+  bool has_more = 2; // true if offset+limit didn't reach the end of the range
+}

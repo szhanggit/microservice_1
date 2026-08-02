@@ -1,0 +1,61 @@
+# Routes external traffic to transaction-gateway only - transaction-service
+# and transaction-worker are internal-only and never exposed
+# (TransactionGateway.md §3: "TransactionService has no ALB/Ingress... since
+# only the Gateway is meant to be called externally").
+#
+# ingressClassName: alb targets the AWS Load Balancer Controller (its IAM role
+# provisioned via microservice_1_terraform's modules/eks-alb-controller, the
+# controller itself installed via a separate app-deploy step - see
+# Kubernetes.md - matches how microservice_0/kubernetes/scripts/
+# install-alb-controller.sh does it), which creates a real internet-facing
+# Application Load Balancer for this Ingress.
+#
+# Uses the same *.ekslab.xyz wildcard ACM cert microservice_0 uses (confirmed
+# live via `aws acm list-certificates` - one cert, one hosted zone, shared
+# across both projects' AWS account) and the same
+# external-dns.alpha.kubernetes.io/hostname pattern - ExternalDNS's IRSA
+# plumbing (modules/eks-external-dns) was already provisioned, this just
+# starts using it. Reachable at https://microservice1.ekslab.xyz once
+# ExternalDNS creates the Route53 alias record (can take a minute or two
+# after the Ingress's ALB is provisioned); the ALB's own DNS name still works
+# too:
+#   kubectl get ingress -n ${NAMESPACE} transaction-gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+#
+# ${NAMESPACE} substituted by scripts/deploy-app.sh via envsubst.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: transaction-gateway
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: transaction-gateway
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: frontend
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: transaction-gateway-ingress
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ca-central-1:286664220642:certificate/79114ecf-5ba1-4fac-a025-4709372825fe
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    external-dns.alpha.kubernetes.io/hostname: microservice1.ekslab.xyz
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/success-codes: '200'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: transaction-gateway
+                port:
+                  number: 8080
