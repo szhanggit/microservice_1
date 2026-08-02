@@ -1,0 +1,19 @@
+# Local-only load-generation tool - always targets the live public
+# https://microservice1.ekslab.xyz URL from wherever this runs, never
+# deployed anywhere (no kubernetes/helm manifests exist for it, by design).
+#
+# Overrides use the standard .NET double-underscore convention for nested
+# config keys (ClientTester:TargetUrl -> ClientTester__TargetUrl), read via
+# Program.cs's AddEnvironmentVariables().
+#
+# Run in the foreground and Ctrl+C to stop, same as `dotnet run` - stdout
+# shows the live requests/sec summary either way.
+services:
+  client-tester:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      ClientTester__TargetUrl: ${TARGET_URL:-https://microservice1.ekslab.xyz/api/v1/transactions}
+      ClientTester__Concurrency: ${CONCURRENCY:-50}
+      ClientTester__ReportIntervalSeconds: ${REPORT_INTERVAL_SECONDS:-2}

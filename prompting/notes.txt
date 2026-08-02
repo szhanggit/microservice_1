@@ -3,6 +3,7 @@ claude --resume 9a4db807-4faa-4fa3-b7d5-1247c3a7cf06 --dangerously-skip-permissi
 
 cd /mnt/d/git/microservice_1_terraform
 just apply
+just destroy
 cd /mnt/d/git/microservice_1_terraform/github-actions-oidc
 terraform init -backend-config=backend.tfvars
 terraform apply
