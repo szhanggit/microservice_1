@@ -1,0 +1,39 @@
+# TransactionGateway.md §7: local Redis container for convenient iteration
+# (unlike SQS, Redis has no "must be the real cloud thing" requirement).
+#
+# `include` pulls in TransactionService's and TransactionWorker's own
+# docker-compose.yml files, so `docker compose up` from here brings up the
+# full local stack (Gateway + Service + Worker + both Redis containers) in
+# one go, not just the Gateway. Each included file remains the source of
+# truth for its own service - nothing here duplicates their config. Requires
+# TransactionService's and TransactionWorker's own required env vars
+# (SQS_QUEUE_URL, AWS credentials, SHARD_*_CONNECTION_STRING /
+# SHARD_*_READONLY_CONNECTION_STRING, REPORTING_READONLY_CONNECTION_STRING)
+# to be set the same way as running those files standalone - see their own
+# docker-compose.yml comments.
+include:
+  - path: ../TransactionService/docker-compose.yml
+  - path: ../TransactionWorker/docker-compose.yml
+
+services:
+  transaction-gateway:
+    build:
+      context: ..
+      dockerfile: TransactionGateway/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      Redis__ConnectionString: redis-gateway:6379
+      # Reaches the transaction-service container brought up by the included
+      # TransactionService/docker-compose.yml, over this Compose project's
+      # internal network - plain HTTP/2 ("h2c"), which Program.cs opts into
+      # via the Http2UnencryptedSupport AppContext switch.
+      TransactionService__GrpcAddress: ${TRANSACTION_SERVICE_GRPC_ADDRESS:-http://transaction-service:8080}
+    depends_on:
+      - redis-gateway
+      - transaction-service
+
+  redis-gateway:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
