@@ -1,0 +1,21 @@
+# provider: aws (not the deprecated aws-eks) + identityOwner: keda -
+# single-hop AssumeRoleWithWebIdentity using the KEDA operator's own IRSA
+# identity. This is load-bearing, not arbitrary - see
+# kubernetes/transaction-worker/triggerauthentication.yaml's header comment
+# for the full 3-attempt history of why identityOwner: workload does NOT
+# work here (an unauthorized second role-chain hop) and why the operator's
+# own ServiceAccount must be the one carrying the IRSA annotation
+# (microservice_1_terraform's main.tf/modules/keda).
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: transaction-worker-sqs-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: transaction-worker
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: worker
+spec:
+  podIdentity:
+    provider: aws
+    identityOwner: keda

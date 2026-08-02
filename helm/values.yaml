@@ -1,0 +1,66 @@
+# Defaults for every environment-specific field are intentionally empty -
+# helm/justfile's deploy-app/deploy-all recipes resolve the real values from
+# SSM Parameter Store at deploy time (image URLs, Redis/SQS/DynamoDB
+# endpoints) and pass them via --set, exactly mirroring which values
+# kubernetes/scripts/deploy-app.sh resolves today. See prompting/Helm.md §2
+# "Dynamic values" decision - nothing environment-specific is meant to be
+# committed here.
+
+awsRegion: ca-central-1
+
+gateway:
+  enabled: true
+  replicaCount: 2
+  image: ""              # full ECR image:tag, e.g. <repo-url>/transactiongateway:<tag>
+  redis:
+    endpoint: ""          # ElastiCache primary endpoint (no port, no scheme)
+  ingress:
+    hostname: microservice1.ekslab.xyz
+    certificateArn: arn:aws:acm:ca-central-1:286664220642:certificate/79114ecf-5ba1-4fac-a025-4709372825fe
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+service:
+  enabled: true
+  replicaCount: 2
+  image: ""              # full ECR image:tag, e.g. <repo-url>/transactionservice:<tag>
+  serviceAccountName: transaction-service
+  redis:
+    endpoint: ""
+  sqs:
+    queueUrl: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+worker:
+  enabled: true
+  image: ""              # full ECR image:tag, e.g. <repo-url>/transactionworker:<tag>
+  serviceAccountName: transaction-worker
+  sqs:
+    queueUrl: ""
+  dynamodb:
+    tableName: ""
+  # minReplicaCount: 1, NOT 0 - see templates/transaction-worker/scaledobject.yaml's
+  # header comment and prompting/Helm.md §3 for why (KEDA 2.16.1 scale-from-zero
+  # push-loop found unreliable on this cluster).
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 60
+  queueLength: "5"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

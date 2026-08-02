@@ -1,0 +1,50 @@
+# Routes external traffic to transaction-gateway only - transaction-service
+# and transaction-worker are internal-only and never exposed
+# (TransactionGateway.md §3: "TransactionService has no ALB/Ingress... since
+# only the Gateway is meant to be called externally").
+#
+# ingressClassName: alb targets the AWS Load Balancer Controller, installed
+# separately (see kubernetes/scripts/install-alb-controller.sh, delegated to
+# by helm/justfile - see prompting/Helm.md §2, this chart doesn't install it).
+#
+# hostname/certificateArn are values.yaml entries (gateway.ingress.*), not
+# hardcoded - see prompting/Helm.md §2's Ingress-values decision. Defaults
+# match the live *.ekslab.xyz wildcard cert/hostname kubernetes/'s own
+# ingress.yaml uses.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: transaction-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: transaction-gateway
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: frontend
+  annotations:
+    alb.ingress.kubernetes.io/load-balancer-name: transaction-gateway-ingress
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.gateway.ingress.certificateArn | quote }}
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.gateway.ingress.hostname | quote }}
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: '15'
+    alb.ingress.kubernetes.io/healthcheck-timeout-seconds: '5'
+    alb.ingress.kubernetes.io/healthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: '2'
+    alb.ingress.kubernetes.io/success-codes: '200'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: transaction-gateway
+                port:
+                  number: 8080

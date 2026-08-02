@@ -12,6 +12,11 @@ cd /mnt/d/git/microservice_1/kubernetes
 just deploy-all
 just destroy-app
 
+
+cd /mnt/d/git/microservice_1/helm
+just deploy-all
+just destroy-app
+
 Swagger:
 http://localhost:5071/swagger
 https://localhost:7097/swagger

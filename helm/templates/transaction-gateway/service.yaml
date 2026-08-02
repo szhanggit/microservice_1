@@ -1,0 +1,18 @@
+# ClusterIP, fronted by ingress.yaml's ALB Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: transaction-gateway
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: transaction-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
