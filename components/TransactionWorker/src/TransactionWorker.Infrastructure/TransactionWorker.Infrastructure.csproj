@@ -9,6 +9,11 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.102.1" />
     <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="4.0.100.7" />
     <PackageReference Include="AWSSDK.SQS" Version="4.0.100.7" />
+    <!-- No code references this directly - the AWS SDK reflectively loads it at
+         runtime only when resolving IRSA's AssumeRoleWithWebIdentityCredentials.
+         Without it, DynamoDB/SQS calls throw InvalidOperationException in-cluster
+         (works fine locally against non-IRSA credentials). -->
+    <PackageReference Include="AWSSDK.SecurityToken" Version="4.0.100.7" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.10" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
