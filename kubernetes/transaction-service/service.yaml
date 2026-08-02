@@ -1,0 +1,20 @@
+# ClusterIP only - called in-cluster by transaction-gateway over gRPC, never
+# from outside the cluster (TransactionGateway.md §3, no ALB/Ingress).
+# ${NAMESPACE} substituted by scripts/deploy-app.sh via envsubst.
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-service
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: transaction-service
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: backend
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: transaction-service
+  ports:
+    - name: grpc
+      port: 8080
+      targetPort: grpc

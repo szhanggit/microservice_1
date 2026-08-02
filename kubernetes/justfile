@@ -1,0 +1,66 @@
+set shell := ["bash", "-uc"]
+
+# Point local kubectl at the EKS cluster microservice_1_terraform created for
+# one environment. Reads the cluster name from SSM Parameter Store - no
+# dependency on the Terraform CLI, that project's state, or S3 backend
+# credentials.
+update-kubeconfig env="develop":
+    ./scripts/update-kubeconfig.sh {{env}}
+
+# main.tf's eks_alb_controller module only provisions IAM/IRSA - this
+# installs the controller itself via Helm. Required for
+# transaction-gateway/ingress.yaml to do anything at all.
+install-alb-controller env="develop": (update-kubeconfig env)
+    ./scripts/install-alb-controller.sh {{env}}
+
+# main.tf's eks_cluster_autoscaler module only provisions IAM/IRSA - this
+# installs the autoscaler itself via Helm. variables.tf's node_max_size
+# comment assumes this is running (nothing grows the node group past
+# node_desired_size without it).
+install-cluster-autoscaler env="develop": (update-kubeconfig env)
+    ./scripts/install-cluster-autoscaler.sh {{env}}
+
+# main.tf's eks_external_dns module only provisions IAM/IRSA - this installs
+# the controller itself via Helm, scoped to domainFilters=ekslab.xyz and
+# policy=upsert-only so it only ever touches records under this one shared
+# domain and never auto-deletes anything (see cleanup-dns.sh). Required for
+# transaction-gateway/ingress.yaml's external-dns.alpha.kubernetes.io/
+# hostname annotation to actually create a Route53 record.
+install-external-dns env="develop": (update-kubeconfig env)
+    ./scripts/install-external-dns.sh {{env}}
+
+apply-db-secret env="develop":
+    ./scripts/apply-db-secret.sh {{env}}
+
+# Drops and recreates transactions/transactions_reporting from
+# components/TransactionWorker/resources/postgres/*.sql via a Kubernetes Job.
+# Runs automatically as part of deploy-app/deploy-all (destructive by design,
+# same as microservice_0) - this recipe exists to reset the schema on demand
+# without a full redeploy.
+init-db env="develop": (update-kubeconfig env)
+    ./scripts/init-db.sh {{env}}
+
+# Build + push the three service images to ECR (needs microservice_1_terraform
+# applied first - specifically Kubernetes.md §5 Phase 1, EKS/IRSA/KEDA +
+# ecr). tag defaults to the current commit's short SHA, not "latest" - so
+# every build is independently addressable/rollback-able instead of
+# overwriting the same floating tag each time.
+build-push env="develop" tag=`git rev-parse --short HEAD`:
+    ./scripts/build-and-push-images.sh {{env}} {{tag}}
+
+deploy-app env="develop" tag=`git rev-parse --short HEAD`: (update-kubeconfig env)
+    ./scripts/deploy-app.sh {{env}} {{tag}}
+
+# Full path to get the whole system running on EKS in one command, assuming
+# microservice_1_terraform's EKS/IRSA/KEDA/ECR has already been applied
+# (Kubernetes.md §5 Phase 1).
+deploy-all env="develop" tag=`git rev-parse --short HEAD`: (install-alb-controller env) (install-external-dns env) (install-cluster-autoscaler env) (build-push env tag) (deploy-app env tag)
+
+# Tear down the app layer - Deployments/Services/Ingress/KEDA
+# resources/Secret, plus uninstalls the ALB controller/cluster-autoscaler/
+# external-dns Helm releases and cleans up ExternalDNS's Route53 records
+# (it runs policy=upsert-only and will never do this itself). Run this
+# BEFORE `just destroy` in microservice_1_terraform - the ALB's security
+# groups/ENIs can otherwise block Terraform from deleting the VPC.
+destroy-app env="develop": (update-kubeconfig env)
+    ./scripts/destroy-app.sh {{env}}

@@ -1,1 +1,89 @@
 claude --resume 9a4db807-4faa-4fa3-b7d5-1247c3a7cf06 --dangerously-skip-permissions
+
+
+cd /mnt/d/git/microservice_1_terraform
+just apply
+cd /mnt/d/git/microservice_1_terraform/github-actions-oidc
+terraform init -backend-config=backend.tfvars
+terraform apply
+
+
+cd /mnt/d/git/microservice_1/kubernetes
+just deploy-all
+just destroy-app
+
+Swagger:
+http://localhost:5071/swagger
+https://localhost:7097/swagger
+
+
+http://localhost:8080/swagger
+https://microservice1.ekslab.xyz/swagger
+
+cd D:\git\microservice_1\components\TransactionGateway
+$creds = aws configure export-credentials | ConvertFrom-Json
+$env:AWS_ACCESS_KEY_ID = $creds.AccessKeyId
+$env:AWS_SECRET_ACCESS_KEY = $creds.SecretAccessKey
+$env:AWS_SESSION_TOKEN = $creds.SessionToken
+
+$env:SQS_QUEUE_URL = "https://sqs.ca-central-1.amazonaws.com/286664220642/TransactionQueue-develop"
+$shardConn = "Host=microservice1-develop-shard-1.c50cu4q2crsg.ca-central-1.rds.amazonaws.com;Port=5432;Database=transactions;Username=dbadmin;Password=550e8400-e29b-41d4-a716-446655440000"
+$env:SHARD_0_CONNECTION_STRING = $shardConn
+$env:SHARD_1_CONNECTION_STRING = $shardConn
+$env:SHARD_2_CONNECTION_STRING = $shardConn
+$env:SHARD_0_READONLY_CONNECTION_STRING = $shardConn
+$env:SHARD_1_READONLY_CONNECTION_STRING = $shardConn
+$env:SHARD_2_READONLY_CONNECTION_STRING = $shardConn
+$env:REPORTING_READONLY_CONNECTION_STRING = "Host=microservice1-develop-reporting.c50cu4q2crsg.ca-central-1.rds.amazonaws.com;Port=5432;Database=transactions;Username=dbadmin;Password=550e8400-e29b-41d4-a716-446655440000"
+
+docker compose down
+
+
+{
+  "transaction_no": "TXN-20260801-0001",
+  "transaction_datetime": "2026-08-01T10:30:00Z",
+  "amount": "125.50",
+  "type": "PAYMENT",
+  "status": "COMPLETED",
+  "currency": "USD"
+}
+
+
+
+
+
+
+
+作为架构师，你的决策链应该是：
+单库扛不住写压力了 -> 水平分库（对应你的第一句话）。
+业务需要后台复杂报表/大屏了 -> 建立汇聚库（对应你的第二句话）。
+汇聚库数据量过大查询慢 -> 不建索引，直接上列式存储（ClickHouse）。
+
+分库：是为提高写的效率。
+分表（水平分表）：是“物理切割”，把一张表的数据拆到多个独立的物理实体（不同文件甚至不同库）里。
+分区（Partition）：是“逻辑收纳”，把一张表的数据在同一个数据库内部，按规则存放到不同的物理文件（.ibd或数据段）中，但对上层应用仍然是一张逻辑表。
+    按区查询来提高效率
+
+我说的是按一张表内的冷热字段来分。热字段放一个表里。冷字段放另一张表里。我说的是这种分表。Vertical Partitioning
+    垂直分表主要是为了增加读的效率是吗？
+
+提高写入效率：
+    分库
+    批量写入
+    Queue
+提高读出效率：
+    Reporting DB
+    垂直分表（冷热拆分）
+    水平分表（partition）        
+
+如果是通过log来进行数据的replic，它会避开execution plan，会避开Shared Lock，会避开rollback。    
+
+Sharded Tables
+Collocated Tables
+-- 建表时，两张表都按 customer_id 分片
+CREATE TABLE orders (order_id INT, customer_id INT, ...) 
+  SHARD BY customer_id;  -- 伪代码示意
+
+CREATE TABLE order_items (item_id INT, order_id INT, customer_id INT, ...) 
+  SHARD BY customer_id;  -- 分片键必须和 orders 保持一致
+Reference Tables（参考表）—— "将lookup table全量复制到每个分片"  

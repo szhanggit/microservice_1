@@ -1,0 +1,45 @@
+# RESOLVED (2026-08-02, validated against the live cluster after a real
+# terraform apply). History, since this took three attempts to get right:
+#
+# 1. Default aws-eks podIdentity used the KEDA operator's OWN ServiceAccount
+#    (keda namespace), which had no eks.amazonaws.com/role-arn annotation at
+#    all - confirmed via `KEDAScalerFailed`: "no EC2 IMDS role found".
+# 2. Tried identityOwner: workload (transaction-worker's own already-correct
+#    IRSA role) under both aws-eks (silently ignored - aws-eks is deprecated
+#    and doesn't support identityOwner at all) and aws (accepted, but under
+#    provider: aws, identityOwner: workload makes the OPERATOR assume its own
+#    role first, then role-chain a *second*, plain (non-federated)
+#    sts:AssumeRole onto the target workload's role - which
+#    transaction-worker-role's trust policy never granted, since it only
+#    trusts OIDC-federated ServiceAccount subjects, not other IAM roles as
+#    principals. Confirmed via AccessDenied: "assumed-role/...-keda-trigger-
+#    auth-role/... is not authorized to perform: sts:AssumeRole on resource:
+#    .../transaction-worker-role".
+# 3. Fixed at the root instead: main.tf's irsa_keda_trigger_auth module now
+#    targets system:serviceaccount:keda:keda-operator directly (not a
+#    separate unused SA), and modules/keda's helm_release annotates the
+#    Helm-created keda-operator ServiceAccount with that role's ARN
+#    (serviceAccount.operator.annotations). That role already has
+#    sqs:GetQueueAttributes on this queue directly - no second hop needed,
+#    so identityOwner: keda (single-hop AssumeRoleWithWebIdentity as the
+#    operator's own now-correctly-annotated identity) is all that's required.
+#
+# ${NAMESPACE} substituted by scripts/deploy-app.sh via envsubst.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: transaction-worker-sqs-auth
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: transaction-worker
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: worker
+spec:
+  podIdentity:
+    # provider: aws-eks is deprecated (KEDA operator logs: "AWS EKS Identity
+    # has been deprecated ... will be removed from KEDA on v3"); provider:
+    # aws is the current replacement. identityOwner: keda = single-hop,
+    # operator's own IRSA identity (see history above for why this is
+    # correct here and identityOwner: workload is not).
+    provider: aws
+    identityOwner: keda

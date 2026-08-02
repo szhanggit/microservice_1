@@ -13,7 +13,7 @@
 
 | Decision | Choice | Why |
 |---|---|---|
-| Queue type | Standard (not FIFO) | Cheaper, higher throughput, no ordering guarantee needed. At-least-once delivery is already handled elsewhere: `TransactionService`'s dedup cache before send, and `TransactionWorker`'s DynamoDB claim + Aurora `UNIQUE KEY` after receive (`KEDA.md` §5). Nothing in the design depends on message order. |
+| Queue type | Standard (not FIFO) | Cheaper, higher throughput, no ordering guarantee needed. At-least-once delivery is already handled elsewhere: `TransactionService`'s dedup cache before send, and `TransactionWorker`'s DynamoDB claim + the DB's `UNIQUE` constraint after receive (`KEDA.md` §5). Nothing in the design depends on message order. |
 | Encryption | SSE-SQS (AWS-managed keys) | Free, encryption at rest still applied. SSE-KMS would add per-request KMS cost for no real benefit on a demo queue. |
 | DLQ purpose | Manual inspection only | Messages that exhaust `maxReceiveCount` land in the DLQ for you to look at; no CloudWatch alarm/redrive automation for this demo. |
 | Visibility timeout | 30s | Short is fine — SQS's own timeout isn't the primary recovery path here. `TransactionWorker` claims into DynamoDB and deletes the SQS message almost immediately (`KEDA.md` §5); the lease/reclaim mechanism there is what actually handles a worker dying mid-processing, not SQS redelivery. |
@@ -58,7 +58,7 @@ modules/sqs/
 ```
 
 - `queue_url`/`queue_arn` outputs feed: the KEDA `ScaledObject` trigger config (`KEDA.md` §6), `TransactionService`'s config (`TransactionService.md` §4), and `TransactionWorker`'s config.
-- Applied per environment (`environments/develop|staging|production`, per `Terraform.md` §4) alongside the other modules. All three environments live in the same AWS account — isolation comes from environment-suffixed resource names (`TransactionQueue-develop`, `-staging`, `-production`), the same convention `Terraform.md` already uses for the Aurora cluster identifiers (`microservice1-<env>-shard-0`, etc.), not from separate accounts.
+- Applied per environment (`environments/develop|staging|production`, per `Terraform.md` §4) alongside the other modules. All three environments live in the same AWS account — isolation comes from environment-suffixed resource names (`TransactionQueue-develop`, `-staging`, `-production`), the same convention `Terraform.md` already uses for the DB instance identifiers (`microservice1-<env>-shard-0`, etc.), not from separate accounts.
 
 ## 6. Implementation Plan
 

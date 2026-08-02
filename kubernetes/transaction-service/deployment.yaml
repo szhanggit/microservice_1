@@ -1,0 +1,97 @@
+# serviceAccountName: transaction-service - created directly by Terraform's
+# irsa_transaction_service module (modules/irsa-service-role), already
+# annotated with eks.amazonaws.com/role-arn. Grants sqs:SendMessage only.
+#
+# replicas: 2 + hpa.yaml + pdb.yaml, matching microservice_0/kubernetes's
+# convention for its own internal gRPC services (Kubernetes.md §2).
+#
+# ${NAMESPACE}/${SERVICE_IMAGE}/${SVC_REDIS_ENDPOINT}/${SQS_QUEUE_URL} are
+# substituted by scripts/deploy-app.sh via envsubst - not valid YAML to
+# kubectl apply directly, see that script. The db-connection-strings Secret
+# referenced below is created separately by scripts/apply-db-secret.sh
+# (pulled live from Secrets Manager, not committed anywhere).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-service
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: transaction-service
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transaction-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transaction-service
+        app.kubernetes.io/part-of: microservice1
+        app.kubernetes.io/component: backend
+    spec:
+      serviceAccountName: transaction-service
+      containers:
+        - name: transaction-service
+          image: ${SERVICE_IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 8080
+            - name: health
+              containerPort: 8081
+          env:
+            - name: Redis__ConnectionString
+              value: "${SVC_REDIS_ENDPOINT}:6379"
+            - name: Sqs__QueueUrl
+              value: "${SQS_QUEUE_URL}"
+            - name: AWS__Region
+              value: "ca-central-1"
+            # database.md §1's topology note: shard-0/shard-2 don't physically
+            # exist, so all 3 keys point at the same shard-1 instance.
+            - name: Shards__ConnectionStrings__0
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__1
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__2
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Reporting__ConnectionString
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: reporting-connection-string
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5

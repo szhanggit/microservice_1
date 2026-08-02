@@ -1,0 +1,73 @@
+# No Service and no probes - TransactionWorker has no HTTP listener at all
+# (KEDA.md §4, uses dotnet/runtime not dotnet/aspnet as its base image).
+# serviceAccountName: transaction-worker - created directly by Terraform's
+# irsa_transaction_worker module, granting SQS receive/delete/GetQueueAttributes
+# + DynamoDB PutItem/UpdateItem/Query.
+#
+# replicas: 0 here - KEDA's ScaledObject (scaledobject.yaml) owns the actual
+# replica count once applied (minReplicaCount: 0, KEDA.md §6). Setting this to
+# anything else would fight KEDA's own scaling decisions. No HPA/PDB either -
+# both are meaningless when the "floor" replica count is legitimately 0.
+#
+# ${NAMESPACE}/${WORKER_IMAGE}/${SQS_QUEUE_URL}/${DYNAMODB_TABLE_NAME} are
+# substituted by scripts/deploy-app.sh via envsubst - not valid YAML to
+# kubectl apply directly, see that script. The db-connection-strings Secret
+# referenced below is created separately by scripts/apply-db-secret.sh
+# (pulled live from Secrets Manager, not committed anywhere).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-worker
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: transaction-worker
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transaction-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transaction-worker
+        app.kubernetes.io/part-of: microservice1
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: transaction-worker
+      containers:
+        - name: transaction-worker
+          image: ${WORKER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS__Region
+              value: "ca-central-1"
+            - name: Sqs__QueueUrl
+              value: "${SQS_QUEUE_URL}"
+            - name: DynamoDb__TableName
+              value: "${DYNAMODB_TABLE_NAME}"
+            # database.md §1's topology note: shard-0/shard-2 don't physically
+            # exist, so all 3 keys point at the same shard-1 instance.
+            - name: Shards__ConnectionStrings__0
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__1
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: Shards__ConnectionStrings__2
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

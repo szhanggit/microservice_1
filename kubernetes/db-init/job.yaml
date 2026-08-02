@@ -1,0 +1,82 @@
+# Job specs are immutable - kubernetes/scripts/init-db.sh deletes any
+# previous db-init Job before applying this one, same pattern as
+# microservice_0/kubernetes/db-init/job.yaml.
+#
+# ${NAMESPACE} substituted by scripts/deploy-app.sh/init-db.sh via envsubst.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-init
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: db-init
+    app.kubernetes.io/part-of: microservice1
+    app.kubernetes.io/component: batch
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-init
+        app.kubernetes.io/part-of: microservice1
+        app.kubernetes.io/component: batch
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: db-init
+          image: postgres:18
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              parse() {
+                echo "$1" | tr ';' '\n' | sed -n "s/^$2=//p"
+              }
+
+              apply() {
+                label="$1"; conn="$2"; sql_file="$3"
+                host=$(parse "$conn" Host)
+                port=$(parse "$conn" Port)
+                db=$(parse "$conn" Database)
+                user=$(parse "$conn" Username)
+                pass=$(parse "$conn" Password)
+
+                echo "Resetting $label schema on $host:$port/$db..."
+                PGPASSWORD="$pass" psql -h "$host" -p "$port" -U "$user" -d "$db" -v ON_ERROR_STOP=1 -f "$sql_file"
+              }
+
+              apply "shard-1" "$SHARD_CONN" /scripts/01-shard-schema.sql
+              apply "reporting" "$REPORTING_CONN" /scripts/02-reporting-schema.sql
+
+              echo "Schema reset complete."
+          env:
+            # Same Secret every other workload already uses (populated by
+            # apply-db-secret.sh from Secrets Manager) - no separate
+            # credentials plumbing needed for this Job. Named explicitly
+            # (not envFrom) since the Secret's keys are hyphenated
+            # (shard-connection-string) and hyphens aren't valid in shell
+            # variable names.
+            - name: SHARD_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: shard-connection-string
+            - name: REPORTING_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: db-connection-strings
+                  key: reporting-connection-string
+          volumeMounts:
+            - name: sql-scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: sql-scripts
+          configMap:
+            # Published by kubernetes/scripts/init-db.sh from
+            # components/TransactionWorker/resources/postgres/*.sql
+            # (kubectl create configmap --from-file), not checked in here, so
+            # the SQL has one source of truth.
+            name: db-init-scripts
