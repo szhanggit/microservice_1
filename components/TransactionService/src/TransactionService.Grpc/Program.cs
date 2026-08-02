@@ -39,4 +39,11 @@ var app = builder.Build();
 app.MapGrpcService<TransactionGrpcService>();
 app.MapGet("/", () => "TransactionService gRPC endpoint - use a gRPC client (e.g. grpcurl) to call SubmitTransaction.");
 
+// Kubernetes probes (kubernetes/transaction-service/deployment.yaml) - no
+// downstream dependency checks, just confirms the process is up and Kestrel
+// is accepting connections, same as TransactionGateway's /health.
+app.MapGet("/health", () => Results.Ok());
+app.MapGet("/ready", () => Results.Ok());
+app.MapGet("/live", () => Results.Ok());
+
 app.Run();

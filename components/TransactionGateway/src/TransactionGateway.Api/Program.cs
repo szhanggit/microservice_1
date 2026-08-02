@@ -51,6 +51,14 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
+// ALB target group health check (kubernetes/transaction-gateway/ingress.yaml)
+// and Kubernetes probes (kubernetes/transaction-gateway/deployment.yaml) - no
+// downstream dependency checks, just confirms the process is up and Kestrel
+// is accepting connections.
+app.MapGet("/health", () => Results.Ok());
+app.MapGet("/ready", () => Results.Ok());
+app.MapGet("/live", () => Results.Ok());
+
 app.MapPost("/api/v1/transactions", async (
     SubmitTransactionHttpRequest request,
     ITransactionSubmissionHandler handler,
