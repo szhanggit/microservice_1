@@ -55,9 +55,14 @@ docker compose down
 }
 
 
-
-
-
+Reporting Instance:
+docker run --rm -it postgres:16-alpine psql "host=microservice1-develop-reporting.c50cu4q2crsg.ca-central-1.rds.amazonaws.com dbname=transactions user=dbadmin password=550e8400-e29b-41d4-a716-446655440000"
+SELECT count(*) FROM transactions_reporting;
+SELECT * FROM transactions_reporting LIMIT 20;
+Shard Instance:
+docker run --rm -it postgres:16-alpine psql "host=microservice1-develop-shard-1.c50cu4q2crsg.ca-central-1.rds.amazonaws.com dbname=transactions user=dbadmin password=550e8400-e29b-41d4-a716-446655440000"
+SELECT count(*) FROM transactions;
+SELECT * FROM transactions ORDER BY system_datetime DESC LIMIT 20;
 
 
 作为架构师，你的决策链应该是：
@@ -93,3 +98,9 @@ CREATE TABLE orders (order_id INT, customer_id INT, ...)
 CREATE TABLE order_items (item_id INT, order_id INT, customer_id INT, ...) 
   SHARD BY customer_id;  -- 分片键必须和 orders 保持一致
 Reference Tables（参考表）—— "将lookup table全量复制到每个分片"  
+
+
+遇到的问题：
+If there are no items in SQS, the size KEDA worker will be scaled down to 0. In this case, when an item comes to SQS, KEDA will not respond.
+The solution is to set min size to be 1.
+"MaxPoolSizePerShard": 10. It means that the max connection number of one pod to one shard is 10.
