@@ -55,6 +55,9 @@ appsettings.*.local.json
 .DS_Store
 Thumbs.db
 
+# Sample/template config files
+*.sample
+
 # Rider
 *.sln.iml
 
