@@ -1,0 +1,67 @@
+name: Rollback
+
+# Manual-only, deliberately - same safety posture as destroy.yml, since
+# rolling back changes what's actually running in a real environment. Rolls
+# back to the immediately preceding revision if `revision` is left blank
+# (Helm's own default `helm rollback` behavior), or to a specific revision
+# number if provided - check `helm history microservice1 -n
+# microservice1-<environment>` first to find one. Only reverts Kubernetes
+# manifests, never the database - see helm/scripts/rollback.sh.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to roll back
+        type: choice
+        options: [develop, staging, production]
+        default: develop
+      revision:
+        description: Revision number to roll back to (blank = previous revision)
+        type: string
+        default: ""
+      confirm:
+        description: Type the environment name above to confirm
+        type: string
+        required: true
+
+concurrency:
+  group: microservice1-deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ca-central-1
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm environment name matches
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.environment }}" ]; then
+            echo "::error::confirm ('${{ inputs.confirm }}') does not match environment ('${{ inputs.environment }}') - aborting."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ACTIONS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: extractions/setup-just@v2
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
+
+      - name: Update kubeconfig
+        working-directory: helm
+        run: just update-kubeconfig "${{ inputs.environment }}"
+
+      - name: Rollback app
+        working-directory: helm
+        run: just rollback "${{ inputs.environment }}" "${{ inputs.revision }}"
