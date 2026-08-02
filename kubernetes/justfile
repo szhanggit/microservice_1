@@ -51,10 +51,19 @@ build-push env="develop" tag=`git rev-parse --short HEAD`:
 deploy-app env="develop" tag=`git rev-parse --short HEAD`: (update-kubeconfig env)
     ./scripts/deploy-app.sh {{env}} {{tag}}
 
+# Starts/resumes the DMS CDC task(s) feeding transactions_reporting. Safe to
+# run every deploy (idempotent - no-ops if already running); no-ops entirely
+# if this environment has no DMS resources yet. See
+# scripts/start-cdc-pipeline.sh for why running this right after deploy-app
+# (which always wipes/reseeds the shard via init-db.sh first) means
+# CDC-only replication never has a backfill gap.
+start-cdc-pipeline env="develop":
+    ./scripts/start-cdc-pipeline.sh {{env}}
+
 # Full path to get the whole system running on EKS in one command, assuming
 # microservice_1_terraform's EKS/IRSA/KEDA/ECR has already been applied
 # (Kubernetes.md §5 Phase 1).
-deploy-all env="develop" tag=`git rev-parse --short HEAD`: (install-alb-controller env) (install-external-dns env) (install-cluster-autoscaler env) (build-push env tag) (deploy-app env tag)
+deploy-all env="develop" tag=`git rev-parse --short HEAD`: (install-alb-controller env) (install-external-dns env) (install-cluster-autoscaler env) (build-push env tag) (deploy-app env tag) (start-cdc-pipeline env)
 
 # Tear down the app layer - Deployments/Services/Ingress/KEDA
 # resources/Secret, plus uninstalls the ALB controller/cluster-autoscaler/
