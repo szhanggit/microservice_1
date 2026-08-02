@@ -156,3 +156,7 @@ jobs:
       - name: Deploy app
         working-directory: helm
         run: just deploy-app "$ENVIRONMENT" "$TAG"
+
+      - name: Start CDC pipeline
+        working-directory: helm
+        run: just start-cdc-pipeline "$ENVIRONMENT"
